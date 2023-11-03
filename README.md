@@ -5,10 +5,10 @@ A simple delay audio plugin
 This repository contains code for a basic delay plugin, using the [JUCE](https://juce.com) framework. It was created as part of a self-guided course I worked through online. The repository currently has the C++ code as I'm working to tweak and update things from when the self-guided course was first put together to bring the code up to date with more modern C++.
 
 ## Contents
--PluginEditor.cpp
--PluginEditor.h
--PluginProcessor.cpp
--PluginProcessor.h
+- PluginEditor.cpp
+- PluginEditor.h
+- PluginProcessor.cpp
+- PluginProcessor.h
 
 The first two files are for the display/user interface and the second two are the brains behind the operation, so to speak.
 
