@@ -9,21 +9,23 @@
 #pragma once
 
 #include <JuceHeader.h>
-
-#define MAX_DELAY_TIME 2
+#include "KAPGain.h"
+#include "KAPDelay.h"
+#include "KAPLFO.h"
+#include "KAPPresetManager.h"
 
 //==============================================================================
 /**
 */
-class KadenzeDelayAudioProcessor  : public juce::AudioProcessor
+class KadenzeAudioPluginAudioProcessor  : public juce::AudioProcessor
                             #if JucePlugin_Enable_ARA
                              , public juce::AudioProcessorARAExtension
                             #endif
 {
 public:
     //==============================================================================
-    KadenzeDelayAudioProcessor();
-    ~KadenzeDelayAudioProcessor() override;
+    KadenzeAudioPluginAudioProcessor();
+    ~KadenzeAudioPluginAudioProcessor() override;
 
     //==============================================================================
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
@@ -58,29 +60,27 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
     
-    float lin_interp(float inSampleX, float inSampleY, float inFloatPhase);
+    float getInputGainMeterLevel(int inChannel);
+    float getOutputGainMeterLevel(int inChannel);
+
+    
+    AudioProcessorValueTreeState parameters;
+    
+    KAPPresetManager* getPresetManager();
 
 private:
     
-    float mTimeSmoothed;
+    void initializeDSP(); // Internal
     
-    juce::AudioParameterFloat* mDryWetParameter;
-    juce::AudioParameterFloat* mFeedbackParameter;
-    juce::AudioParameterFloat* mTimeParameter;
+    void initializeParameters(); // Internal
     
-    float mFeedbackLeft;
-    float mFeedbackRight;
+    std::unique_ptr<KAPGain> mInputGain [2];
+    std::unique_ptr<KAPGain> mOutputGain [2];
+    std::unique_ptr<KAPDelay> mDelay [2];
+    std::unique_ptr<KAPLfo> mLfo [2];
     
-    float mDelayTimeInSamples;
-    float mDelayReadHead;
-    
-    int mCircularBufferLength;
-    
-    int mCircularBufferWriteHead;
-    
-    float* mCircularBufferLeft;
-    float* mCircularBufferRight;
+    std::unique_ptr<KAPPresetManager> mPresetManager;
     
     //==============================================================================
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KadenzeDelayAudioProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KadenzeAudioPluginAudioProcessor)
 };

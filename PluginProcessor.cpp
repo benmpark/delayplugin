@@ -8,9 +8,25 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "KAPParameters.h"
+
+AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
+{
+    std::vector<std::unique_ptr<AudioParameterFloat>> params;
+    
+    for(int i = 0; i < kParameter_TotalNumParameters; i++){
+        
+        /*params.push_back(std::make_unique<AudioParameterFloat>(KAPParameterID[i],
+                                                               KAPParameterLabel[i],
+                                                               NormalisableRange<float> (0.0f, 1.0f),
+                                                               KAPParameterDefaultValue[i]));*/
+    }
+    
+    return { params.begin(), params.end() };
+}
 
 //==============================================================================
-KadenzeDelayAudioProcessor::KadenzeDelayAudioProcessor()
+KadenzeAudioPluginAudioProcessor::KadenzeAudioPluginAudioProcessor()
 #ifndef JucePlugin_PreferredChannelConfigurations
      : AudioProcessor (BusesProperties()
                      #if ! JucePlugin_IsMidiEffect
@@ -19,59 +35,28 @@ KadenzeDelayAudioProcessor::KadenzeDelayAudioProcessor()
                       #endif
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
-                       )
+                       ),
+        parameters(*this, nullptr, juce::Identifier("KAP"), createParameterLayout())
 #endif
 {
-    addParameter(mDryWetParameter = new juce::AudioParameterFloat("drywet",
-                                                                  "Dry Wet",
-                                                                  0.0,
-                                                                  1.0,
-                                                                  0.5));
-    addParameter(mFeedbackParameter = new juce::AudioParameterFloat("feedback",
-                                                                    "Feedback",
-                                                                    0.0,
-                                                                    0.98,
-                                                                    0.5));
-    addParameter(mTimeParameter = new juce::AudioParameterFloat("delaytime",
-                                                                "Delay Time",
-                                                                0.01,
-                                                                MAX_DELAY_TIME,
-                                                                0.5));
+    //initializeParameters();
     
-    mCircularBufferLeft = nullptr;
-    mCircularBufferRight = nullptr;
-    mCircularBufferWriteHead = 0;
-    mCircularBufferLength = 0;
-    mDelayTimeInSamples = 0;
-    mDelayReadHead = 0;
+    initializeDSP();
     
-    mFeedbackLeft = 0;
-    mFeedbackRight = 0;
-    
-    mTimeSmoothed = 0;
-
+    mPresetManager = std::make_unique<KAPPresetManager>(this);
 }
 
-KadenzeDelayAudioProcessor::~KadenzeDelayAudioProcessor()
+KadenzeAudioPluginAudioProcessor::~KadenzeAudioPluginAudioProcessor()
 {
-    if (mCircularBufferLeft != nullptr) {
-        delete [] mCircularBufferLeft;
-        mCircularBufferLeft = nullptr;
-    }
-    
-    if (mCircularBufferRight != nullptr) {
-        delete [] mCircularBufferRight;
-        mCircularBufferRight = nullptr;
-    }
 }
 
 //==============================================================================
-const juce::String KadenzeDelayAudioProcessor::getName() const
+const juce::String KadenzeAudioPluginAudioProcessor::getName() const
 {
     return JucePlugin_Name;
 }
 
-bool KadenzeDelayAudioProcessor::acceptsMidi() const
+bool KadenzeAudioPluginAudioProcessor::acceptsMidi() const
 {
    #if JucePlugin_WantsMidiInput
     return true;
@@ -80,7 +65,7 @@ bool KadenzeDelayAudioProcessor::acceptsMidi() const
    #endif
 }
 
-bool KadenzeDelayAudioProcessor::producesMidi() const
+bool KadenzeAudioPluginAudioProcessor::producesMidi() const
 {
    #if JucePlugin_ProducesMidiOutput
     return true;
@@ -89,7 +74,7 @@ bool KadenzeDelayAudioProcessor::producesMidi() const
    #endif
 }
 
-bool KadenzeDelayAudioProcessor::isMidiEffect() const
+bool KadenzeAudioPluginAudioProcessor::isMidiEffect() const
 {
    #if JucePlugin_IsMidiEffect
     return true;
@@ -98,67 +83,60 @@ bool KadenzeDelayAudioProcessor::isMidiEffect() const
    #endif
 }
 
-double KadenzeDelayAudioProcessor::getTailLengthSeconds() const
+double KadenzeAudioPluginAudioProcessor::getTailLengthSeconds() const
 {
     return 0.0;
 }
 
-int KadenzeDelayAudioProcessor::getNumPrograms()
+int KadenzeAudioPluginAudioProcessor::getNumPrograms()
 {
     return 1;   // NB: some hosts don't cope very well if you tell them there are 0 programs,
                 // so this should be at least 1, even if you're not really implementing programs.
 }
 
-int KadenzeDelayAudioProcessor::getCurrentProgram()
+int KadenzeAudioPluginAudioProcessor::getCurrentProgram()
 {
     return 0;
 }
 
-void KadenzeDelayAudioProcessor::setCurrentProgram (int index)
+void KadenzeAudioPluginAudioProcessor::setCurrentProgram (int index)
 {
 }
 
-const juce::String KadenzeDelayAudioProcessor::getProgramName (int index)
+const juce::String KadenzeAudioPluginAudioProcessor::getProgramName (int index)
 {
     return {};
 }
 
-void KadenzeDelayAudioProcessor::changeProgramName (int index, const juce::String& newName)
+void KadenzeAudioPluginAudioProcessor::changeProgramName (int index, const juce::String& newName)
 {
 }
 
 //==============================================================================
-void KadenzeDelayAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void KadenzeAudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    mDelayTimeInSamples = sampleRate * *mTimeParameter;
+    // Use this method as the place to do any pre-playback
+    // initialisation that you need..
     
-    mCircularBufferLength = sampleRate * MAX_DELAY_TIME;
-    
-    if (mCircularBufferLeft == nullptr) {
-        mCircularBufferLeft = new float[mCircularBufferLength];
+    for (int i = 0; i < 2; i++) {
+        mDelay[i]->setSampleRate(sampleRate);
+        mLfo[i]->setSampleRate(sampleRate);
     }
-    
-    juce::zeromem(mCircularBufferLeft, mCircularBufferLength * sizeof(float));
-    
-    if (mCircularBufferRight == nullptr) {
-        mCircularBufferRight = new float[mCircularBufferLength];
-    }
-    
-    juce::zeromem(mCircularBufferRight, mCircularBufferLength * sizeof(float));
-    
-    mCircularBufferWriteHead = 0;
-    
-    mTimeSmoothed = *mTimeParameter;
 }
 
-void KadenzeDelayAudioProcessor::releaseResources()
+void KadenzeAudioPluginAudioProcessor::releaseResources()
 {
     // When playback stops, you can use this as an opportunity to free up any
     // spare memory, etc.
+    
+    for (int i = 0; i < 2; i++) {
+        mDelay[i]->reset();
+        mLfo[i]->reset();
+    }
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
-bool KadenzeDelayAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool KadenzeAudioPluginAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
   #if JucePlugin_IsMidiEffect
     juce::ignoreUnused (layouts);
@@ -183,7 +161,7 @@ bool KadenzeDelayAudioProcessor::isBusesLayoutSupported (const BusesLayout& layo
 }
 #endif
 
-void KadenzeDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
+void KadenzeAudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels  = getTotalNumInputChannels();
@@ -197,81 +175,117 @@ void KadenzeDelayAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     // this code if your algorithm always overwrites all the output channels.
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
-        
-    float* leftChannel = buffer.getWritePointer(0);
-    float* rightChannel = buffer.getWritePointer(1);
 
-    for (int i = 0; i < buffer.getNumSamples(); i++) {
+    // This is the place where you'd normally do the guts of your plugin's
+    // audio processing...
+    // Make sure to reset the state if your inner loop is processing
+    // the samples and the outer loop is handling the channels.
+    // Alternatively, you can process the samples with the channels
+    // interleaved by keeping the same state.
+    for (int channel = 0; channel < totalNumInputChannels; ++channel)
+    {
+        auto* channelData = buffer.getWritePointer (channel);
+        const int numSamplesToRender = buffer.getNumSamples();
+
+        //mInputGain[channel]->KAPGain::process(channelData, getParameter(kParameter_InputGain), channelData, buffer.getNumSamples());
+        mInputGain[channel]->process(channelData, *parameters.getRawParameterValue(KAPParameterID[kParameter_InputGain]), channelData, numSamplesToRender);
         
-        mTimeSmoothed = mTimeSmoothed - 0.001*(mTimeSmoothed-*mTimeParameter);
+        //float rate = (channel==0) ? 0 : getParameter(kParameter_ModulationRate);
         
-        mDelayTimeInSamples = getSampleRate() * mTimeSmoothed;
+        //mLfo[channel]->process(rate, getParameter(kParameter_ModulationDepth), buffer.getNumSamples());
         
-        mCircularBufferLeft[mCircularBufferWriteHead] = leftChannel[i] + mFeedbackLeft;
-        mCircularBufferRight[mCircularBufferWriteHead] = rightChannel[i] + mFeedbackRight;
+        float rate = 0;
         
-        mDelayReadHead = mCircularBufferWriteHead - mDelayTimeInSamples;
-        
-        if (mDelayReadHead < 0) {
-            mDelayReadHead += mCircularBufferLength;
+        if(channel==1) {
+            rate = *parameters.getRawParameterValue(KAPParameterID[kParameter_ModulationRate]);
         }
         
-        int readHead_x = (int)mDelayReadHead;
-        float readHeadFloat = mDelayReadHead - readHead_x;
-        int readHead_y = readHead_x + 1;
-        if (readHead_y >= mCircularBufferLength) {
-            readHead_y -= mCircularBufferLength;
-        }
+        mLfo[channel]->process(rate, *parameters.getRawParameterValue(KAPParameterID[kParameter_ModulationDepth]), numSamplesToRender);
         
-        float delay_sample_left = KadenzeDelayAudioProcessor::lin_interp(mCircularBufferLeft[readHead_x], mCircularBufferLeft[readHead_y], readHeadFloat);
-        float delay_sample_right = KadenzeDelayAudioProcessor::lin_interp(mCircularBufferRight[readHead_x], mCircularBufferRight[readHead_y], readHeadFloat);
+        //mDelay[channel]->KAPDelay::process(channelData, getParameter(kParameter_DelayTime), getParameter(kParameter_DelayFeedback), getParameter(kParameter_DelayWetDry), mLfo[channel]->getBuffer(), channelData, buffer.getNumSamples());
+        mDelay[channel]->process(channelData, *parameters.getRawParameterValue(KAPParameterID[kParameter_DelayTime]), *parameters.getRawParameterValue(KAPParameterID[kParameter_DelayFeedback]), *parameters.getRawParameterValue(KAPParameterID[kParameter_DelayWetDry]), *parameters.getRawParameterValue(KAPParameterID[kParameter_DelayType]), mLfo[channel]->getBuffer(), channelData, numSamplesToRender);
         
-        mFeedbackLeft = delay_sample_left * *mFeedbackParameter;
-        mFeedbackRight = delay_sample_right * *mFeedbackParameter;
         
-        mCircularBufferWriteHead++;
-        
-        buffer.setSample(0, i, buffer.getSample(0, i) * (1 - *mDryWetParameter) + delay_sample_left * *mDryWetParameter);
-        buffer.setSample(1, i, buffer.getSample(1, i) * (1 - *mDryWetParameter) + delay_sample_right * *mDryWetParameter);
-        
-        if (mCircularBufferWriteHead >= mCircularBufferLength) {
-            mCircularBufferWriteHead = 0;
-        }
+        //mOutputGain[channel]->KAPGain::process(channelData, getParameter(kParameter_OutputGain), channelData, buffer.getNumSamples());
+        mOutputGain[channel]->process(channelData, *parameters.getRawParameterValue(KAPParameterID[kParameter_OutputGain]), channelData, numSamplesToRender);
     }
 }
 
 //==============================================================================
-bool KadenzeDelayAudioProcessor::hasEditor() const
+bool KadenzeAudioPluginAudioProcessor::hasEditor() const
 {
     return true; // (change this to false if you choose to not supply an editor)
 }
 
-juce::AudioProcessorEditor* KadenzeDelayAudioProcessor::createEditor()
+juce::AudioProcessorEditor* KadenzeAudioPluginAudioProcessor::createEditor()
 {
-    return new KadenzeDelayAudioProcessorEditor (*this);
+    return new KadenzeAudioPluginAudioProcessorEditor (*this);
 }
 
 //==============================================================================
-void KadenzeDelayAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+void KadenzeAudioPluginAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     // You should use this method to store your parameters in the memory block.
     // You could do that either as raw data, or use the XML or ValueTree classes
     // as intermediaries to make it easy to save and load complex data.
+    
+    XmlElement preset("KAP_StateInfo");
+    XmlElement* presetBody = new XmlElement("KAP_Preset");
+    
+    mPresetManager->getXmlForPreset(presetBody);
+    preset.addChildElement(presetBody);
+    copyXmlToBinary(preset, destData);
 }
 
-void KadenzeDelayAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+void KadenzeAudioPluginAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     // You should use this method to restore your parameters from this memory block,
     // whose contents will have been created by the getStateInformation() call.
+    
+    const auto xmlState = getXmlFromBinary(data, sizeInBytes);
+    
+    jassert (xmlState.get() != nullptr);
+    
+    for(auto* subchild : xmlState->getChildIterator()){
+        mPresetManager->loadPresetForXml(subchild);
+    }
+}
+
+KAPPresetManager* KadenzeAudioPluginAudioProcessor::getPresetManager()
+{
+    return mPresetManager.get();
+}
+
+float KadenzeAudioPluginAudioProcessor::getInputGainMeterLevel(int inChannel) {
+    const float normalizeddB = dBToNormalizedGain(mInputGain[inChannel]->getMeterLevel());
+    
+    return normalizeddB;
+}
+
+float KadenzeAudioPluginAudioProcessor::getOutputGainMeterLevel(int inChannel) {
+    const float normalizeddB = dBToNormalizedGain(mOutputGain[inChannel]->getMeterLevel());
+
+    return normalizeddB;
+}
+
+void KadenzeAudioPluginAudioProcessor::initializeDSP() {
+    for (int i = 0; i < 2; i++) {
+        mInputGain[i] = std::make_unique<KAPGain>();
+        mOutputGain[i] = std::make_unique<KAPGain>();
+        mDelay[i] = std::make_unique<KAPDelay>();
+        mLfo[i] = std::make_unique<KAPLfo>();
+    }
+}
+
+void KadenzeAudioPluginAudioProcessor::initializeParameters() {
+    /*for(int i = 0; i < kParameter_TotalNumParameters; i++) {
+        parameters.createAndAddParameter(KAPParameterID[i], KAPParameterID[i], KAPParameterID[i], NormalisableRange<float>(0.0f, 1.0f), 0.5f, nullptr, nullptr);
+    }*/
 }
 
 //==============================================================================
 // This creates new instances of the plugin..
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new KadenzeDelayAudioProcessor();
+    return new KadenzeAudioPluginAudioProcessor();
 }
-
-float KadenzeDelayAudioProcessor::lin_interp(float inSampleX, float inSampleY, float inFloatPhase) {
-    return (1 - inFloatPhase) * inSampleX + inFloatPhase * inSampleY;
-};

@@ -10,15 +10,17 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "KAPMainPanel.h"
+#include "KAPLookAndFeel.h"
 
 //==============================================================================
 /**
 */
-class KadenzeDelayAudioProcessorEditor  : public juce::AudioProcessorEditor
+class KadenzeAudioPluginAudioProcessorEditor  : public juce::AudioProcessorEditor
 {
 public:
-    KadenzeDelayAudioProcessorEditor (KadenzeDelayAudioProcessor&);
-    ~KadenzeDelayAudioProcessorEditor() override;
+    KadenzeAudioPluginAudioProcessorEditor (KadenzeAudioPluginAudioProcessor&);
+    ~KadenzeAudioPluginAudioProcessorEditor() override;
 
     //==============================================================================
     void paint (juce::Graphics&) override;
@@ -27,15 +29,12 @@ public:
 private:
     // This reference is provided as a quick way for your editor to
     // access the processor object that created it.
-    KadenzeDelayAudioProcessor& audioProcessor;
+    KadenzeAudioPluginAudioProcessor& audioProcessor;
     
-    juce::Slider mDryWetSlider;
-    juce::Slider mFeedbackSlider;
-    juce::Slider mTimeSlider;
-        
-    juce::Label dryWetLabel;
-    juce::Label feedbackLabel;
-    juce::Label delayLabel;
+    std::unique_ptr<KAPMainPanel> mMainPanel;
+    std::unique_ptr<KAPLookAndFeel> mLookAndFeel;
+    
+    Image mBackgroundImage;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KadenzeDelayAudioProcessorEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KadenzeAudioPluginAudioProcessorEditor)
 };
